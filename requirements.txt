@@ -2,3 +2,4 @@ pyrogram
 python-decouple
 tgcrypto
 speedtest-cli
+dnspython==2.3.0
