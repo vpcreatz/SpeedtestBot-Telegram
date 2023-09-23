@@ -5,15 +5,36 @@
 
 import os 
 from os import error
-import speedtest   
 import logging
 import pyrogram
 import math
 import requests
 from decouple import config
-from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from pyrogram.types import User, Message
+
+import time
+import psutil
+import shutil
+import sqlite3
+
+from speedtest_cli import Speedtest
+from pyrogram import Client, StopPropagation, filters
+
+bot_start_time = time.time()
+
+class Translation(object):
+    CURRENT_PLAN_DETAILS = """About you...
+--------
+Telegram ID : <code>{}</code>
+"""
+    UPGRADE_TEXT = "<b>30rs - One Month</b><b>10rs - 7 Days </b>/help for Details"
+
+
+logging.basicConfig(
+    level=logging.DEBUG, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
+logger = logging.getLogger(__name__)
 
 bughunter0 = Client(
     "SpeedTestBot",
@@ -26,56 +47,122 @@ bughunter0 = Client(
 async def start(bot, update):
  txt = await update.reply_text("ചത്തോന്ന് അറിയാൻ വന്നതാവും ല്ലേ !!")
 
-@bughunter0.on_message(filters.command("speedtest"))
-async def run_speedtest(client, message):
-    m = await message.reply_text("⚡️ Running Server Speedtest")
-    
-    try:
-        test = speedtest.Speedtest()
-        test.get_best_server()
-        
-        m = await m.edit("⚡️ Running Download Speedtest..")
-        download_speed = test.download() / 1024 / 1024  # Convert to Mbps
-        
-        m = await m.edit("⚡️ Running Upload Speedtest...")
-        upload_speed = test.upload() / 1024 / 1024  # Convert to Mbps
-        
-        test.results.share()
-        result = test.results.dict()
-    except Exception as e:
-        await m.edit(str(e))  # Convert exception to string before editing
-        return
-    
-    m = await m.edit("🔄 Sharing Speedtest Results")
-    
-    try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3'}
-        response = requests.get(result["share"], headers=headers)
-        response.raise_for_status()  # Raise exception for HTTP errors
-        content = response.content
-        
-        path = "speedtest_result.png"  # Provide a local file name
-        with open(path, "wb") as file:
-            file.write(content)
-    except requests.exceptions.RequestException as req_err:
-        await m.edit(f"Error downloading: {req_err}")
-        return
-    
-    output = f"""💡 <b>SpeedTest Results</b>
-<u><b>Client:</b></u>
-<b>ISP:</b> {result['client']['isp']}
-<b>Country:</b> {result['client']['country']}
-<u><b>Server:</b></u>
-<b>Name:</b> {result['server']['name']}
-<b>Country:</b> {result['server']['country']}, {result['server']['cc']}
-<b>Sponsor:</b> {result['server']['sponsor']}
-⚡️ <b>Ping:</b> {result['ping']}
-🚀 <b>Download Speed:</b> {download_speed:.2f} Mbps
-🚀 <b>Upload Speed:</b> {upload_speed:.2f} Mbps"""
+def humanbytes(size):
+    # https://stackoverflow.com/a/49361727/4723940
+    # 2**10 = 1024
+    if not size:
+        return ""
+    power = 2 ** 10
+    n = 0
+    dic_powerN = {0: " ", 1: "Ki", 2: "Mi", 3: "Gi", 4: "Ti"}
+    while size > power:
+        size /= power
+        n += 1
+    return str(round(size, 2)) + " " + dic_powerN[n] + "B"
 
-    msg = await client.send_photo(
-        chat_id=message.chat.id, photo=path, caption=output, parse_mode="html"
+def get_readable_file_size(size_in_bytes):
+    if size_in_bytes is None:
+        return '0B'
+    index = 0
+    size_units = ["B", "KB", "MB", "GB", "TB"]
+    while size_in_bytes >= 1024 and index < len(size_units) - 1:
+        size_in_bytes /= 1024
+        index += 1
+    return f'{size_in_bytes:.2f}{size_units[index]}' if index > 0 else f'{size_in_bytes}B'
+
+
+@Client.on_message(filters.command(["server"]))
+async def start(bot, update):
+    bot_uptime = time.strftime("%Hh %Mm %Ss", time.gmtime(time.time() - bot_start_time))
+    joinButton = InlineKeyboardMarkup(
+        [
+            [InlineKeyboardButton("JOIN", url="https://t.me/MKSVIPLINK2")],
+            [InlineKeyboardButton("Try", url="https://t.me/MKSMAINCHANNEL")],
+        ]
     )
-    os.remove(path)
-    await m.delete()
+    # https://git.io/Jye7k
+    total, used, free = shutil.disk_usage(".")
+    total = humanbytes(total)
+    used = humanbytes(used)
+    free = humanbytes(free)
+    sent = humanbytes(psutil.net_io_counters().bytes_sent)
+    recv = humanbytes(psutil.net_io_counters().bytes_recv)
+    cpuUsage = psutil.cpu_percent(interval=0.5)
+    print(total, used, free, sent, recv)
+    memory = psutil.virtual_memory().percent
+    disk = psutil.disk_usage("/").percent
+    botstats = (
+        f"<b>Bot Uptime:</b> {bot_uptime}\n"
+        f"<b>Total disk space:</b> {total}\n"
+        f"<b>Used:</b> {used}  "
+        f"<b>Free:</b> {free}\n\n"
+        f"📊Data Usage📊\n<b>Upload:</b> {sent}\n"
+        f"<b>Down:</b> {recv}\n\n"
+        f"<b>CPU:</b> {cpuUsage}% "
+        f"<b>RAM:</b> {memory}% "
+        f"<b>Disk:</b> {disk}%"
+    )
+    await update.reply_text(botstats, reply_markup=joinButton)
+
+
+#@Client.on_message(filters.command(["speedtest"]) & filters.private)
+async def speedtest(_, message):
+    speed = await message.reply_text("<i>Initializing Speedtest...</i>")
+    test = Speedtest()
+    servers = test.get_servers()
+    if not servers:
+        await speed.edit_text("<b>No servers available for testing.</b>")
+        return
+    server = servers[0] 
+
+    test.download(server)
+    test.upload(server)
+    test.results.share()
+    result = test.results.dict()
+    path = result['share']
+
+
+    string_speed = f'''
+➲ <b><i>SPEEDTEST INFO</i></b>
+┠ <b>Upload:</b> <code>{get_readable_file_size(result['upload'] / 8)}/s</code>
+┠ <b>Download:</b>  <code>{get_readable_file_size(result['download'] / 8)}/s</code>
+┠ <b>Ping:</b> <code>{result['ping']} ms</code>
+┠ <b>Time:</b> <code>{result['timestamp']}</code>
+┠ <b>Data Sent:</b> <code>{get_readable_file_size(int(result['bytes_sent']))}</code>
+┖ <b>Data Received:</b> <code>{get_readable_file_size(int(result['bytes_received']))}</code>
+
+➲ <b><i>SPEEDTEST SERVER</i></b>
+┠ <b>Name:</b> <code>{result['server']['name']}</code>
+┠ <b>Country:</b> <code>{result['server']['country']}, {result['server']['cc']}</code>
+┠ <b>Sponsor:</b> <code>{result['server']['sponsor']}</code>
+┠ <b>Latency:</b> <code>{result['server']['latency']}</code>
+┠ <b>Latitude:</b> <code>{result['server']['lat']}</code>
+┖ <b>Longitude:</b> <code>{result['server']['lon']}</code>
+
+➲ <b><i>CLIENT DETAILS</i></b>
+┠ <b>IP Address:</b> <code>{result['client']['ip']}</code>
+┠ <b>Latitude:</b> <code>{result['client']['lat']}</code>
+┠ <b>Longitude:</b> <code>{result['client']['lon']}</code>
+┠ <b>Country:</b> <code>{result['client']['country']}</code>
+┠ <b>ISP:</b> <code>{result['client']['isp']}</code>
+┖ <b>ISP Rating:</b> <code>{result['client']['isprating']}</code>
+'''
+    try:
+        await message.reply_photo(string_speed, photo=path)
+        await speed.delete()
+    except Exception as e:
+        logger.error(str(e))
+        await speed.edit_text(string_speed)
+
+
+def speed_convert(size):
+    """Hi human, can't you read bytes?"""
+    power = 2 ** 10
+    zero = 0
+    units = {0: "", 1: "Kb/s", 2: "MB/s", 3: "Gb/s", 4: "Tb/s"}
+    while size > power:
+        size /= power
+        zero += 1
+    return f"{round(size, 2)} {units[zero]}"
+
 bughunter0.run()
